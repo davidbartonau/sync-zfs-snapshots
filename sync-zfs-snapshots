@@ -110,7 +110,7 @@ def main(argv):
                 sys.exit(1)
                 
 
-    if removeOnDestination:
+    if removeOnDestination and len (destinationCreatedSorted) > 0:
         for volIndex, volKey in enumerate(destinationCreatedSorted):
             destinationSubvolume = destinationSubvolumesByCreation[volKey]
             
