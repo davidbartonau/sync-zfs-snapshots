@@ -3,6 +3,7 @@
 import sys, argparse, os, time, datetime, subprocess, io, re, argparse
 
 logLevel = 0
+removeOnDestination = 0
 
 class ZFSFilesystem:
     def __init__(self, uri, sshIdentity = None):
@@ -48,7 +49,7 @@ class ZFSFilesystem:
 
 
 def main(argv):
-    global logLevel
+    global logLevel, removeOnDestination
 
     parser = argparse.ArgumentParser(description='Synchronise all snapshots in a ZFS filesystem to another zfs filesystem.  Useful for synchronising backups.')
 
@@ -56,12 +57,16 @@ def main(argv):
     parser.add_argument ("--sshIdentity", dest='sshIdentity', nargs=1, help='ssh identity key file to use when ssh-ing to destination servers')
     parser.add_argument ("source", help='Source ZFS filesystem.  Local filsystems are specified as zpool/filesystem.  Remote ones are specified as ssh://user@server[:port]:zpool/filesystem.')
     parser.add_argument ("destination", help='Destination ZFS filesystem.  Same format as source.')
+    parser.add_argument ("--remove-on-destination", dest='removeOnDestination', nargs='?', const=1, type=int, help='Indicates the script to remove snapshots not present on the origin')
 
     args = parser.parse_args()
     print ('args:' + str(args))
 
     if args.debug:
         logLevel = args.debug
+
+    if args.removeOnDestination:
+        removeOnDestination = args.removeOnDestination
 
     source = ZFSFilesystem(args.source, sshIdentity = args.sshIdentity)
     destination = ZFSFilesystem(args.destination, sshIdentity = args.sshIdentity)
@@ -74,6 +79,7 @@ def main(argv):
     destinationZfsProc = subprocess.Popen(destination.getZFSCmdLine (['/sbin/zfs', 'get', '-Hpd', '1', 'creation', destination.getZPoolFilesystem ()]), stdout=subprocess.PIPE)
     destinationSubvolumesByCreation = readSubvolumesByCreation (destinationZfsProc)
     destinationCreationBySubvolumes = invertMap (destinationSubvolumesByCreation)
+    destinationCreatedSorted = sorted (destinationSubvolumesByCreation)
 
     for volIndex, volKey in enumerate(sourceCreatedSorted):
         sourceSubvolume = sourceSubvolumesByCreation[volKey]
@@ -103,6 +109,21 @@ def main(argv):
                 print ("Error running:" + fullCmdLine)
                 sys.exit(1)
                 
+
+    if removeOnDestination and len (destinationCreatedSorted) > 0:
+        for volIndex, volKey in enumerate(destinationCreatedSorted):
+            destinationSubvolume = destinationSubvolumesByCreation[volKey]
+            
+            if destinationSubvolume not in sourceCreationBySubvolumes:
+                print ("# Subvolume not present on source:", destinationSubvolume)
+                removeCmd = destination.getZFSCmdLine (['/sbin/zfs', 'destroy', destination.getZPoolFilesystem() + '@' + destinationSubvolume])
+                removeCmdLine = ' '.join (removeCmd)
+                logLevel > 0 and print (removeCmdLine)
+                result = subprocess.call(removeCmdLine, shell = True)
+
+                if result:
+                    print ("Error running:" + removeCmdLine)
+                    sys.exit(1)
 
     #print ("########## Local volumes #######")
     #printMap (sourceSubvolumesByCreation)
